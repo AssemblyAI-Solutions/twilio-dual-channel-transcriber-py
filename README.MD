@@ -73,7 +73,7 @@ Timestamps are in milliseconds relative to the start of the audio stream for eac
 
 ## Technical Details
 
-- This project uses FastAPI and doesn't rely on the AssemblyAI Python SDK, as the SDK currently doesn't work in an async context. Future updates to the AssemblyAI SDK are planned to support async operations.
+- This project calls the AssemblyAI WebSocket directly instead of using the AssemblyAI Python SDK. This is because the SDK's async context is based on threading and not asyncio, and asyncio is more efficient for this use case. Future updates to the AssemblyAI SDK are planned to support asyncio-based async operations.
 
 - The Twilio code sets up two media streams:
   1. A unidirectional async stream used for transcription
