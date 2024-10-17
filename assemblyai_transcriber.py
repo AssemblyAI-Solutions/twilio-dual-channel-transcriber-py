@@ -8,8 +8,8 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Fixed chunk size of 100ms
-ASSEMBLY_CHUNK_SIZE_MS = 100  # Chunk Size in ms, fixed at 100ms for consistency
+# AssemblyAI chunk size
+ASSEMBLY_CHUNK_SIZE_MS = 100  # AssemblyAI expects 100ms - 500ms range
 
 class TranscriptManager:
     def __init__(self):
@@ -38,7 +38,7 @@ class AssemblyAITranscriber:
         self.sample_rate = sample_rate
         self.ws_url = f"wss://api.assemblyai.com/v2/realtime/ws?sample_rate={sample_rate}&encoding=pcm_mulaw"
         self.transcript_manager = TranscriptManager()
-        self.chunk_size_samples = int(self.sample_rate * ASSEMBLY_CHUNK_SIZE_MS / 1000)
+        self.assembly_chunk_samples = int(self.sample_rate * ASSEMBLY_CHUNK_SIZE_MS / 1000)
 
     async def transcribe(self, audio_queue, track_type):
         logger.info(f"Starting transcription for {track_type} track")
@@ -55,10 +55,10 @@ class AssemblyAITranscriber:
                             logger.info(f"Received stop signal for {track_type} track")
                             break
                         buffer += audio_data
-                        while len(buffer) >= self.chunk_size_samples:
-                            chunk = buffer[:self.chunk_size_samples]
-                            buffer = buffer[self.chunk_size_samples:]
-                            # Encode the binary audio data to base64
+                        while len(buffer) >= self.assembly_chunk_samples:
+                            chunk = buffer[:self.assembly_chunk_samples]
+                            buffer = buffer[self.assembly_chunk_samples:]
+                            # The audio is already μ-law encoded, so we can send it directly
                             audio_base64 = base64.b64encode(chunk).decode('utf-8')
                             await websocket.send(json.dumps({"audio_data": audio_base64}))
                     except asyncio.CancelledError:
@@ -68,9 +68,9 @@ class AssemblyAITranscriber:
                 # Handle any remaining audio in the buffer
                 if buffer:
                     # Calculate how much silence to add
-                    silence_needed = self.chunk_size_samples - len(buffer)
-                    # Add silence (zeros) to the buffer
-                    buffer += b'\x00' * silence_needed
+                    silence_needed = self.assembly_chunk_samples - len(buffer)
+                    # Add silence (127 is the μ-law encoding for 0)
+                    buffer += b'\x7f' * silence_needed
                     # Encode and send the padded chunk
                     audio_base64 = base64.b64encode(buffer).decode('utf-8')
                     await websocket.send(json.dumps({"audio_data": audio_base64}))
