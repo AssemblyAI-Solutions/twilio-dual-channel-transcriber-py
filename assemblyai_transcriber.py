@@ -8,6 +8,9 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Fixed chunk size of 100ms
+ASSEMBLY_CHUNK_SIZE_MS = 100  # Chunk Size in ms, fixed at 100ms for consistency
+
 class TranscriptManager:
     def __init__(self):
         self.partial_transcripts: Dict[str, str] = {"inbound": "", "outbound": ""}
@@ -35,6 +38,7 @@ class AssemblyAITranscriber:
         self.sample_rate = sample_rate
         self.ws_url = f"wss://api.assemblyai.com/v2/realtime/ws?sample_rate={sample_rate}&encoding=pcm_mulaw"
         self.transcript_manager = TranscriptManager()
+        self.chunk_size_samples = int(self.sample_rate * ASSEMBLY_CHUNK_SIZE_MS / 1000)
 
     async def transcribe(self, audio_queue, track_type):
         logger.info(f"Starting transcription for {track_type} track")
@@ -43,19 +47,35 @@ class AssemblyAITranscriber:
             logger.info(f"WebSocket connection established for {track_type} track")
 
             async def send_audio():
+                buffer = b""
                 while True:
                     try:
                         audio_data = await audio_queue.get()
                         if audio_data is None:  # None is our signal to stop
                             logger.info(f"Received stop signal for {track_type} track")
                             break
-                        # Encode the binary audio data to base64
-                        audio_base64 = base64.b64encode(audio_data).decode('utf-8')
-                        await websocket.send(json.dumps({"audio_data": audio_base64}))
-                        logger.debug(f"Sent audio data for {track_type} track")
+                        buffer += audio_data
+                        while len(buffer) >= self.chunk_size_samples:
+                            chunk = buffer[:self.chunk_size_samples]
+                            buffer = buffer[self.chunk_size_samples:]
+                            # Encode the binary audio data to base64
+                            audio_base64 = base64.b64encode(chunk).decode('utf-8')
+                            await websocket.send(json.dumps({"audio_data": audio_base64}))
                     except asyncio.CancelledError:
                         logger.info(f"Send audio task cancelled for {track_type} track")
                         break
+
+                # Handle any remaining audio in the buffer
+                if buffer:
+                    # Calculate how much silence to add
+                    silence_needed = self.chunk_size_samples - len(buffer)
+                    # Add silence (zeros) to the buffer
+                    buffer += b'\x00' * silence_needed
+                    # Encode and send the padded chunk
+                    audio_base64 = base64.b64encode(buffer).decode('utf-8')
+                    await websocket.send(json.dumps({"audio_data": audio_base64}))
+                    logger.info(f"Sent final padded chunk for {track_type} track")
+
                 await websocket.send(json.dumps({"terminate_session": True}))
                 logger.info(f"Sent terminate session message for {track_type} track")
 
